@@ -1,9 +1,10 @@
 """Application configuration for the INKSHIELD backend (M3).
 
-Values are read from environment variables with safe development
-defaults so the API runs out of the box. Real deployments override them
-via a local ``.env`` file (see ``backend/.env.example``); no secrets
-belong in the repository.
+Values are read from the process environment with safe development
+defaults so the API runs out of the box. A ``.env`` file is *not*
+auto-loaded — deployments (Render, CI) and local shells must export the
+variables themselves (see ``backend/.env.example`` for the full list);
+no secrets belong in the repository.
 """
 
 import os

@@ -61,8 +61,11 @@ If PowerShell blocks the activation script, either run it once with
 skip activation and call `.venv\Scripts\python.exe` / `.venv\Scripts\pip.exe`
 directly. (cmd.exe users: `.venv\Scripts\activate.bat`.)
 
-Optionally copy `.env.example` to `.env` and adjust values; the app uses
-safe defaults when nothing is configured.
+`backend/.env.example` lists every supported variable with placeholder
+values (never commit real values). The API reads configuration from the
+process environment only — it does **not** auto-load a `.env` file — so
+export the variables in your shell (or set them in your deployment
+dashboard). Safe defaults apply when nothing is configured.
 
 ## Run the API
 
@@ -228,6 +231,70 @@ Events record what actually happened — deterministic scans and real
 human decisions only, with the previous → new state transition. The
 frontend Audit Trail page (`/audit`) consumes this endpoint through
 `listAuditEvents` in `lib/api/client.ts`.
+
+## Deploy to Render (production)
+
+The repository ships a Render blueprint (`render.yaml` at the repo
+root) declaring the web service. Both the blueprint and a manually
+created **Web Service** use the same values:
+
+| Setting           | Value                                                 |
+| ----------------- | ----------------------------------------------------- |
+| Runtime           | Python                                                 |
+| Root Directory    | `backend`                                              |
+| Build Command     | `pip install -r requirements.txt`                      |
+| Start Command     | `uvicorn app.main:app --host 0.0.0.0 --port $PORT`     |
+| Health Check Path | `/api/v1/health`                                       |
+
+Render assigns the public port through the `PORT` environment variable,
+which is why the start command binds `0.0.0.0 --port $PORT` instead of
+a fixed local port. `requirements.txt` already contains the runtime
+dependencies (`fastapi`, `uvicorn[standard]`, `pydantic`); no database
+or extra services are required.
+
+### Environment variables (set in the Render dashboard)
+
+The blueprint pre-creates these as dashboard-managed values; nothing
+deployment-specific is committed to the repository:
+
+- `INKSHIELD_CORS_ORIGINS` — the deployed Vercel **production origin**:
+  `https://inkshield-rho.vercel.app` (comma-separate additional
+  origins, no trailing slash). Without it the API falls back to the
+  local dev origins (`http://localhost:3000`, `http://127.0.0.1:3000`)
+  and browsers on Vercel are blocked by CORS.
+- `INKSHIELD_ENVIRONMENT` — `production` (informational label; no
+  behavior depends on it).
+
+Configuration is read from the process environment only (Render
+dashboard / shell / CI); a `.env` file is never auto-loaded and real
+values must never be committed. CORS origin values are never written
+to application logs.
+
+Pairing: after the Render service exists, set the Vercel project
+environment variable `NEXT_PUBLIC_API_URL` to the service URL
+(`https://<your-service-name>.onrender.com`) so the frontend calls
+this API.
+
+### In-memory storage (important)
+
+Scans, review decisions, and audit events are stored **in process
+memory only — there is no database**. Every restart, redeploy, or
+Render spin-down (for example an idle free-tier instance) clears
+them: a cold start begins with an empty scan list and an empty audit
+trail. The health, scan, review, and audit endpoints all keep working
+after a restart — only previously recorded records are lost.
+
+### Verify after deploy
+
+`GET https://<your-service-name>.onrender.com/api/v1/health` should
+return:
+
+```json
+{ "status": "healthy", "service": "INKSHIELD API", "version": "v1" }
+```
+
+A CORS preflight from the Vercel origin must answer with
+`access-control-allow-origin: https://inkshield-rho.vercel.app`.
 
 ## Current limitations
 

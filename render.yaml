@@ -1,0 +1,29 @@
+# Render blueprint for the INKSHIELD FastAPI backend.
+#
+# Deploy: Render dashboard -> New -> Blueprint -> this repository.
+# (Manual Web Service steps are documented in backend/README.md,
+# "Deploy to Render", if you prefer not to use a blueprint.)
+#
+# Secrets and deployment-specific values are intentionally NOT written
+# here — set them in the Render dashboard (Environment tab).
+services:
+  - type: web
+    name: inkshield-api
+    runtime: python
+    # The FastAPI app lives in backend/; all commands run from there.
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    # Render assigns the port via $PORT; bind 0.0.0.0 so the public
+    # health check and the Vercel frontend can reach the service.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # GET /api/v1/health — deterministic, no dependencies.
+    healthCheckPath: /api/v1/health
+    envVars:
+      # Comma-separated browser origins allowed by CORS. Set the real
+      # Vercel production origin in the dashboard (never in this file),
+      # e.g. https://inkshield-rho.vercel.app
+      - key: INKSHIELD_CORS_ORIGINS
+        sync: false
+      # Informational deployment label; no behavior depends on it.
+      - key: INKSHIELD_ENVIRONMENT
+        value: production
