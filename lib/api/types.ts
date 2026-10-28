@@ -6,7 +6,7 @@ export type ActorType = 'HUMAN' | 'AI' | 'SYSTEM'
 
 export interface Evidence { source: string; section: string; text: string }
 export interface Review { required: boolean; decision: ReviewDecision | null }
-export interface Finding { id: string; category: string; severity: Severity; status: FindingStatus; title: string; submittedText: string; explanation: string; suggestedCorrection: string; confidence: number; evidence: Evidence[]; review: Review }
+export interface Finding { id: string; category: string; severity: Severity; status: FindingStatus; title: string; submittedText: string; explanation: string; suggestedCorrection: string; confidence: number; evidence: Evidence[]; review: Review; correctedText?: string | null }
 export interface ScanSummary { totalFindings: number; critical: number; high: number; medium: number; low: number }
 export interface Scan { id: string; status: 'running' | 'completed' | 'failed'; complianceScore: number; summary: ScanSummary; findings: Finding[]; content: string; contentType: ContentType }
 export interface ScanRequest { content: string; contentType: ContentType; knowledgeSources: string[] }

@@ -1,17 +1,23 @@
-import type { ContentType, Evidence, Finding, Scan, ScanRequest, ScanSummary } from './types'
+import type { ContentType, Evidence, Finding, ReviewDecision, Scan, ScanRequest, ScanSummary } from './types'
 
 /**
- * Typed HTTP client for the INKSHIELD FastAPI backend (M4).
+ * Typed HTTP client for the INKSHIELD FastAPI backend (M4 scan flow,
+ * M5 human review workflow).
  *
  * - Base URL comes from NEXT_PUBLIC_API_URL (local default only in dev;
  *   production deployments MUST configure it, e.g. on Vercel).
- * - Components call `createScan` and never hardcode URLs themselves.
- * - The request body uses the frontend's camelCase naming
- *   ({ content, contentType, knowledgeSources }); the FastAPI schema
- *   accepts both spellings for knowledge sources.
+ * - Components call `createScan` / `reviewFinding` and never hardcode
+ *   URLs themselves.
+ * - Request bodies use the frontend's camelCase naming
+ *   ({ content, contentType, knowledgeSources } and
+ *   { decision, correctedText }); the FastAPI schemas accept both
+ *   spellings.
  * - The snake_case FastAPI response is parsed and mapped into the
  *   existing frontend `Scan` / `Finding` types.
  */
+
+/** A review decision a human can submit (PENDING is frontend-only UI state). */
+export type ReviewAction = Exclude<ReviewDecision, 'PENDING'>
 
 /** Raw backend response shapes, mirroring backend/app/schemas/scan.py. */
 interface ApiEvidence {
@@ -20,17 +26,24 @@ interface ApiEvidence {
   text: string
 }
 
+interface ApiReview {
+  required: boolean
+  decision: ReviewAction | null
+}
+
 interface ApiFinding {
   id: string
   category: string
   severity: Finding['severity']
-  status: 'OPEN'
+  status: Finding['status']
   title: string
   submitted_text: string
   explanation: string
   suggested_correction: string
   confidence: number
   evidence: ApiEvidence[]
+  review?: ApiReview | null
+  corrected_text?: string | null
 }
 
 interface ApiScanSummary {
@@ -110,7 +123,10 @@ function mapFinding(finding: ApiFinding): Finding {
     suggestedCorrection: finding.suggested_correction,
     confidence: finding.confidence,
     evidence: finding.evidence.map(mapEvidence),
-    review: { required: true, decision: null },
+    review: finding.review
+      ? { required: finding.review.required, decision: finding.review.decision }
+      : { required: true, decision: null },
+    correctedText: finding.corrected_text ?? null,
   }
 }
 
@@ -169,4 +185,54 @@ export async function createScan(
 
   const payload = (await response.json()) as ApiScanResponse
   return mapScan(payload, request.contentType)
+}
+
+/** Body accepted by PATCH /api/v1/scans/{scanId}/findings/{findingId}/review. */
+export interface ReviewRequest {
+  decision: ReviewAction
+  /** Required by the backend when the decision is EDITED. */
+  correctedText?: string
+}
+
+/**
+ * Submit a human review decision for one finding (M5).
+ *
+ * Sends `{ decision, correctedText? }` to
+ * `PATCH /api/v1/scans/{scanId}/findings/{findingId}/review` and maps
+ * the updated finding back into the frontend `Finding` type. Throws
+ * `ScanApiError` (with `status`) when the backend is unreachable or
+ * responds non-2xx — callers must only update the UI after this
+ * resolves, never optimistically.
+ */
+export async function reviewFinding(
+  scanId: string,
+  findingId: string,
+  request: ReviewRequest,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Finding> {
+  const baseUrl = resolveApiBaseUrl()
+  const url = `${baseUrl}/api/v1/scans/${encodeURIComponent(scanId)}/findings/${encodeURIComponent(findingId)}/review`
+
+  const body: { decision: ReviewAction; correctedText?: string } = { decision: request.decision }
+  if (request.correctedText != null) body.correctedText = request.correctedText
+
+  let response: Response
+  try {
+    response = await fetchImpl(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    throw new ScanApiError(
+      `Could not reach the INKSHIELD API at ${baseUrl}. Start the backend (uvicorn app.main:app) or check NEXT_PUBLIC_API_URL.`,
+    )
+  }
+
+  if (!response.ok) {
+    throw new ScanApiError(await readApiError(response), response.status)
+  }
+
+  const payload = (await response.json()) as ApiFinding
+  return mapFinding(payload)
 }

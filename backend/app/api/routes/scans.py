@@ -1,11 +1,17 @@
-"""Scan routes: create scans (POST) and list process-local scans (GET)."""
+"""Scan routes: create scans (POST), list process-local scans (GET),
+and record human review decisions (PATCH .../review)."""
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from app.schemas.scan import ScanRequest, ScanResponse
-from app.services.scanner import ScanStore, scan_content
+from app.schemas.scan import Finding, ReviewRequest, ScanRequest, ScanResponse
+from app.services.scanner import (
+    FindingNotFoundError,
+    ScanNotFoundError,
+    ScanStore,
+    scan_content,
+)
 
 router = APIRouter(tags=["scans"])
 
@@ -37,3 +43,28 @@ def create_scan(
 def list_scans(store: Annotated[ScanStore, Depends(get_scan_store)]) -> list[ScanResponse]:
     """List scans created during the current server process (empty when none)."""
     return store.list()
+
+
+@router.patch(
+    "/scans/{scan_id}/findings/{finding_id}/review",
+    response_model=Finding,
+)
+def review_finding(
+    scan_id: str,
+    finding_id: str,
+    payload: ReviewRequest,
+    store: Annotated[ScanStore, Depends(get_scan_store)],
+) -> Finding:
+    """Record a human review decision for one finding (M5).
+
+    ``decision`` must be APPROVED, REJECTED, EDITED or ESCALATED (422
+    otherwise); EDITED also requires a non-blank ``correctedText``.
+    Unknown scan or finding ids return 404. On success the updated
+    finding is returned and persists for subsequent GETs.
+    """
+    try:
+        return store.apply_review(scan_id, finding_id, payload)
+    except ScanNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except FindingNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

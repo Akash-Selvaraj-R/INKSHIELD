@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createScan, ScanApiError } from '../lib/api/client'
+import { createScan, reviewFinding, ScanApiError } from '../lib/api/client'
 import type { ScanRequest } from '../lib/api/types'
 
 const request = (content: string): ScanRequest => ({ content, contentType: 'landing_page', knowledgeSources: ['claims'] })
@@ -22,6 +22,8 @@ const apiScan = {
       suggested_correction: '99.9% platform availability.',
       confidence: 99,
       evidence: [{ source: 'Product Facts', section: '\u00a72.1', text: '99.9% platform availability.' }],
+      review: { required: true, decision: null },
+      corrected_text: null,
     },
   ],
   content: '100% uptime',
@@ -67,6 +69,7 @@ describe('createScan', () => {
           confidence: 99,
           evidence: [{ source: 'Product Facts', section: '\u00a72.1', text: '99.9% platform availability.' }],
           review: { required: true, decision: null },
+          correctedText: null,
         },
       ],
       content: '100% uptime',
@@ -91,6 +94,108 @@ describe('createScan', () => {
     }) as unknown as typeof fetch
 
     const error = await createScan(request('100% uptime'), fetchImpl).catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(ScanApiError)
+    expect((error as ScanApiError).message).toContain('Could not reach the INKSHIELD API')
+  })
+})
+
+/** A raw FastAPI (snake_case) finding returned by the review endpoint. */
+const apiReviewedFinding = {
+  id: 'INK-0043',
+  category: 'CLAIM',
+  severity: 'CRITICAL',
+  status: 'EDITED',
+  title: 'Unsupported performance claim',
+  submitted_text: '50% faster inference',
+  explanation: 'The claim exceeds the approved quantitative claim.',
+  suggested_correction: 'Up to 30% faster inference.',
+  confidence: 96,
+  evidence: [{ source: 'Product Claims', section: '\u00a74.2', text: 'Up to 30% faster inference.' }],
+  review: { required: true, decision: 'EDITED' },
+  corrected_text: 'Up to 30% faster inference.',
+}
+
+describe('reviewFinding', () => {
+  it('sends the camelCase PATCH request and maps the successful EDITED response', async () => {
+    const calls: { url?: string; init?: RequestInit } = {}
+    const fetchImpl = (async (url: string, init?: RequestInit) => {
+      calls.url = url
+      calls.init = init
+      return jsonResponse(apiReviewedFinding)
+    }) as unknown as typeof fetch
+
+    const updated = await reviewFinding(
+      'scan_abc123def456',
+      'INK-0043',
+      { decision: 'EDITED', correctedText: 'Up to 30% faster inference.' },
+      fetchImpl,
+    )
+
+    expect(calls.url).toBe('http://127.0.0.1:8000/api/v1/scans/scan_abc123def456/findings/INK-0043/review')
+    expect(calls.init?.method).toBe('PATCH')
+    expect(JSON.parse(String(calls.init?.body))).toEqual({
+      decision: 'EDITED',
+      correctedText: 'Up to 30% faster inference.',
+    })
+    expect(updated).toEqual({
+      id: 'INK-0043',
+      category: 'CLAIM',
+      severity: 'CRITICAL',
+      status: 'EDITED',
+      title: 'Unsupported performance claim',
+      submittedText: '50% faster inference',
+      explanation: 'The claim exceeds the approved quantitative claim.',
+      suggestedCorrection: 'Up to 30% faster inference.',
+      confidence: 96,
+      evidence: [{ source: 'Product Claims', section: '\u00a74.2', text: 'Up to 30% faster inference.' }],
+      review: { required: true, decision: 'EDITED' },
+      correctedText: 'Up to 30% faster inference.',
+    })
+  })
+
+  it('maps a successful APPROVED response and omits correctedText from the request', async () => {
+    const calls: { body?: string } = {}
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      calls.body = String(init?.body)
+      return jsonResponse({
+        ...apiReviewedFinding,
+        status: 'APPROVED',
+        corrected_text: null,
+        review: { required: true, decision: 'APPROVED' },
+      })
+    }) as unknown as typeof fetch
+
+    const updated = await reviewFinding('scan_abc123def456', 'INK-0043', { decision: 'APPROVED' }, fetchImpl)
+
+    expect(JSON.parse(String(calls.body))).toEqual({ decision: 'APPROVED' })
+    expect(updated.status).toBe('APPROVED')
+    expect(updated.review).toEqual({ required: true, decision: 'APPROVED' })
+    expect(updated.correctedText).toBeNull()
+    expect(updated.suggestedCorrection).toBe('Up to 30% faster inference.')
+  })
+
+  it('throws ScanApiError with the status and FastAPI detail on non-2xx responses', async () => {
+    const fetchImpl = (async () =>
+      jsonResponse({ detail: "Finding 'INK-9999' was not found in scan 'scan_abc123def456'" }, 404)) as unknown as typeof fetch
+
+    const error = await reviewFinding('scan_abc123def456', 'INK-9999', { decision: 'REJECTED' }, fetchImpl).catch(
+      (e: unknown) => e,
+    )
+
+    expect(error).toBeInstanceOf(ScanApiError)
+    expect((error as ScanApiError).status).toBe(404)
+    expect((error as ScanApiError).message).toContain("Finding 'INK-9999' was not found")
+  })
+
+  it('throws a useful ScanApiError when the backend is unreachable', async () => {
+    const fetchImpl = (async () => {
+      throw new TypeError('fetch failed')
+    }) as unknown as typeof fetch
+
+    const error = await reviewFinding('scan_abc123def456', 'INK-0043', { decision: 'ESCALATED' }, fetchImpl).catch(
+      (e: unknown) => e,
+    )
 
     expect(error).toBeInstanceOf(ScanApiError)
     expect((error as ScanApiError).message).toContain('Could not reach the INKSHIELD API')

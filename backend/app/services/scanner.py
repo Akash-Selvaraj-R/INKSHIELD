@@ -12,8 +12,25 @@ from typing import Sequence
 from uuid import uuid4
 
 from app.rules.engine import EngineFinding, run_engine
-from app.schemas.scan import Evidence, Finding, ScanResponse, ScanSummary, Severity
+from app.schemas.scan import (
+    Evidence,
+    Finding,
+    FindingStatus,
+    ReviewDecision,
+    ReviewRequest,
+    ScanResponse,
+    ScanSummary,
+    Severity,
+)
 from app.services.knowledge import select_knowledge
+
+
+class ScanNotFoundError(LookupError):
+    """Raised when a review targets a scan id that does not exist."""
+
+
+class FindingNotFoundError(LookupError):
+    """Raised when a review targets a finding id outside the scan."""
 
 # Fixed per-severity penalties used by the deterministic compliance score.
 SEVERITY_WEIGHT: dict[Severity, int] = {
@@ -103,3 +120,36 @@ class ScanStore:
     def list(self) -> list[ScanResponse]:
         with self._lock:
             return list(self._scans)
+
+    def apply_review(
+        self,
+        scan_id: str,
+        finding_id: str,
+        payload: ReviewRequest,
+    ) -> Finding:
+        """Record a human review decision on one finding (M5).
+
+        Sets the finding's ``status`` and ``review.decision`` to the
+        submitted decision; EDITED additionally stores the corrected text
+        while leaving the suggested correction and every deterministic
+        scan field untouched. Other findings in the scan are never
+        modified. Raises ``ScanNotFoundError`` / ``FindingNotFoundError``
+        for unknown ids so the route can map them to HTTP 404.
+        """
+        with self._lock:
+            scan = next((item for item in self._scans if item.id == scan_id), None)
+            if scan is None:
+                raise ScanNotFoundError(f"Scan '{scan_id}' was not found")
+            finding = next((item for item in scan.findings if item.id == finding_id), None)
+            if finding is None:
+                raise FindingNotFoundError(
+                    f"Finding '{finding_id}' was not found in scan '{scan_id}'"
+                )
+
+            decision = payload.decision
+            finding.status = FindingStatus(decision.value)
+            finding.review.decision = decision
+            if decision is ReviewDecision.EDITED:
+                # Guaranteed non-blank by ReviewRequest's validator.
+                finding.corrected_text = payload.corrected_text
+            return finding

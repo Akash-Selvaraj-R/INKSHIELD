@@ -97,11 +97,12 @@ Or from `backend/`: `python -m pytest tests -q`.
 
 ## API
 
-| Method | Path                  | Description                                            |
-| ------ | --------------------- | ------------------------------------------------------ |
-| GET    | `/api/v1/health`      | Service health and API version                          |
-| POST   | `/api/v1/scans`       | Scan content; returns findings, summary, score (201)    |
-| GET    | `/api/v1/scans`       | Scans created during the current server process         |
+| Method | Path                                          | Description                                            |
+| ------ | --------------------------------------------- | ------------------------------------------------------ |
+| GET    | `/api/v1/health`                              | Service health and API version                          |
+| POST   | `/api/v1/scans`                               | Scan content; returns findings, summary, score (201)    |
+| GET    | `/api/v1/scans`                               | Scans created during the current server process         |
+| PATCH  | `/api/v1/scans/{scan_id}/findings/{finding_id}/review` | Record a human review decision for one finding (200) |
 
 `POST /api/v1/scans` request:
 
@@ -139,7 +140,9 @@ Response (abbreviated):
       "explanation": "The submitted performance claim exceeds the maximum approved quantitative claim in the brand knowledge base (up to 30% faster).",
       "suggested_correction": "Up to 30% faster inference.",
       "confidence": 96,
-      "evidence": [{ "source": "Product Claims", "section": "§4.2", "text": "Up to 30% faster inference." }]
+      "evidence": [{ "source": "Product Claims", "section": "§4.2", "text": "Up to 30% faster inference." }],
+      "review": { "required": true, "decision": null },
+      "corrected_text": null
     }
   ],
   "content": "NOVA is the fastest AI engine, delivering 50% faster inference."
@@ -151,6 +154,30 @@ within each scan, and are returned in reading order. Evidence always cites
 actual seeded knowledge records — nothing is invented. The compliance score
 starts at 100 and drops by fixed severity weights (CRITICAL 15, HIGH 10,
 MEDIUM 5, LOW 2), clamped to [0, 100].
+
+## Human review (M5)
+
+`PATCH /api/v1/scans/{scan_id}/findings/{finding_id}/review` records a
+human-in-the-loop decision for a single finding:
+
+```json
+{ "decision": "EDITED", "correctedText": "Up to 30% faster inference." }
+```
+
+- `decision` — required; one of `APPROVED`, `REJECTED`, `EDITED`,
+  `ESCALATED`. Any other value (or a missing/mistyped field) is rejected
+  with 422.
+- `correctedText` — optional except for `EDITED`, which requires a
+  non-blank value (422 otherwise). The snake_case spelling
+  `corrected_text` is accepted too; surrounding whitespace is stripped.
+
+The response is the updated finding: `status` and `review.decision` both
+become the decision, `EDITED` additionally stores `corrected_text` while
+keeping `suggested_correction`. Deterministic scan data (title,
+explanation, evidence, confidence, score) is never altered, unrelated
+findings are never modified, and the updated state persists for
+subsequent `GET /api/v1/scans` calls. Unknown scan or finding ids return
+404 with a descriptive `detail`.
 
 ## CORS and frontend integration (M4)
 
@@ -170,8 +197,9 @@ API (see the repository-root `.env.example` and `README.md`).
 
 ## Current limitations
 
-- In-memory only: scans live in process memory and reset on restart.
-- No database, RAG, external LLM calls, authentication, or review
-  workflows (human review actions belong to M5).
+- In-memory only: scans and review decisions live in process memory and
+  reset on restart (no database).
+- No RAG, external LLM calls, authentication, or audit-event
+  architecture yet (audit trail is M6 scope).
 - The Python scanner remains an independent port of the TypeScript
   scanner; no cross-language sharing exists yet.
