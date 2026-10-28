@@ -1,0 +1,13 @@
+# INKSHIELD backend (M3) — Python 3.11+ on Windows, macOS, and Linux.
+# Install with: pip install -r requirements.txt
+
+# Web framework and server
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+
+# Data validation
+pydantic>=2.9,<3.0
+
+# Testing (pytest + HTTPX-based TestClient)
+pytest>=8.0,<10.0
+httpx>=0.27,<1.0
