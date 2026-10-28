@@ -8,7 +8,7 @@ snake_case field names.
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 
 class Severity(str, Enum):
@@ -54,10 +54,20 @@ class ScanSummary(BaseModel):
 
 
 class ScanRequest(BaseModel):
-    """POST /scans payload: content to scan plus an optional knowledge filter."""
+    """POST /scans payload: content to scan plus an optional knowledge filter.
+
+    ``knowledge_sources`` also accepts the frontend's camelCase
+    ``knowledgeSources`` spelling so the JS client can send its natural
+    payload shape (M4 integration).
+    """
+
+    model_config = ConfigDict(validate_by_name=True)
 
     content: str
-    knowledge_sources: list[str] = Field(default_factory=list)
+    knowledge_sources: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("knowledge_sources", "knowledgeSources"),
+    )
 
     @field_validator("content")
     @classmethod

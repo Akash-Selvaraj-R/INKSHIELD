@@ -116,7 +116,9 @@ Or from `backend/`: `python -m pytest tests -q`.
 - `knowledge_sources` — optional list of source ids (`claims`, `terms`,
   `guidelines`, `prohibited`, `facts`). Empty/omitted means the complete
   seeded knowledge base; unknown ids are ignored, never fabricated. If no
-  valid sources remain, the scan completes with no findings.
+  valid sources remain, the scan completes with no findings. The
+  frontend's camelCase spelling `knowledgeSources` is accepted too (M4
+  integration); extra fields such as `contentType` are ignored.
 
 Response (abbreviated):
 
@@ -150,10 +152,26 @@ actual seeded knowledge records — nothing is invented. The compliance score
 starts at 100 and drops by fixed severity weights (CRITICAL 15, HIGH 10,
 MEDIUM 5, LOW 2), clamped to [0, 100].
 
-## Current limitations (M3 scope)
+## CORS and frontend integration (M4)
+
+The Next.js frontend calls this API through the typed client in
+`lib/api/client.ts`. CORS origins are configured with
+`INKSHIELD_CORS_ORIGINS` (comma-separated) and default to the local
+Next.js dev origins (`http://localhost:3000`, `http://127.0.0.1:3000`).
+For a deployed frontend (e.g. Vercel), set it to the real origin:
+
+```powershell
+$env:INKSHIELD_CORS_ORIGINS = "https://your-app.vercel.app"
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+The frontend needs the matching `NEXT_PUBLIC_API_URL` pointing at this
+API (see the repository-root `.env.example` and `README.md`).
+
+## Current limitations
 
 - In-memory only: scans live in process memory and reset on restart.
-- No database, RAG, external LLM calls, authentication, or review workflows.
-- The Next.js frontend is not connected to this backend yet.
-- The Python scanner is an independent port of the TypeScript scanner; no
-  cross-language sharing exists yet.
+- No database, RAG, external LLM calls, authentication, or review
+  workflows (human review actions belong to M5).
+- The Python scanner remains an independent port of the TypeScript
+  scanner; no cross-language sharing exists yet.
