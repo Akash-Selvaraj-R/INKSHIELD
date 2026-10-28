@@ -103,6 +103,7 @@ Or from `backend/`: `python -m pytest tests -q`.
 | POST   | `/api/v1/scans`                               | Scan content; returns findings, summary, score (201)    |
 | GET    | `/api/v1/scans`                               | Scans created during the current server process         |
 | PATCH  | `/api/v1/scans/{scan_id}/findings/{finding_id}/review` | Record a human review decision for one finding (200) |
+| GET    | `/api/v1/audit-events`                        | Recorded audit events in chronological order (M6)       |
 
 `POST /api/v1/scans` request:
 
@@ -195,11 +196,45 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 The frontend needs the matching `NEXT_PUBLIC_API_URL` pointing at this
 API (see the repository-root `.env.example` and `README.md`).
 
+## Audit events (M6)
+
+Every successful write appends one event to an in-memory, append-only
+audit log; failed requests (404/422) never produce entries:
+
+- **POST /scans** → `Scan completed` (`SYSTEM` actor, `RUNNING` →
+  `NEEDS REVIEW`, or `COMPLETED` for a finding-free scan).
+- **PATCH .../review** → the decision's action (`Review approved`,
+  `Review rejected`, `Correction edited`, `Review escalated`) with a
+  `HUMAN` actor and the state transition
+  (`PENDING`/previous decision → new decision).
+
+`GET /api/v1/audit-events` returns them in chronological order:
+
+```json
+{
+  "id": "audit_1a2b3c4d5e6f",
+  "timestamp": "2026-10-28T13:05:11+00:00",
+  "actor": "INKSHIELD Scanner",
+  "actor_type": "SYSTEM",
+  "action": "Scan completed",
+  "object_type": "SCAN",
+  "object_id": "scan_1a2b3c4d5e6f",
+  "previous_state": "RUNNING",
+  "new_state": "NEEDS REVIEW"
+}
+```
+
+Events record what actually happened — deterministic scans and real
+human decisions only, with the previous → new state transition. The
+frontend Audit Trail page (`/audit`) consumes this endpoint through
+`listAuditEvents` in `lib/api/client.ts`.
+
 ## Current limitations
 
-- In-memory only: scans and review decisions live in process memory and
-  reset on restart (no database).
-- No RAG, external LLM calls, authentication, or audit-event
-  architecture yet (audit trail is M6 scope).
+- In-memory only: scans, review decisions, and audit events live in
+  process memory and reset on restart (no database).
+- No RAG, external LLM calls, or authentication yet; human decisions
+  are attributed to a generic "Reviewer" role because no user accounts
+  exist to name a real actor.
 - The Python scanner remains an independent port of the TypeScript
   scanner; no cross-language sharing exists yet.

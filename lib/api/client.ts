@@ -1,4 +1,4 @@
-import type { ContentType, Evidence, Finding, ReviewDecision, Scan, ScanRequest, ScanSummary } from './types'
+import type { AuditEvent, ContentType, Evidence, Finding, ReviewDecision, Scan, ScanRequest, ScanSummary } from './types'
 
 /**
  * Typed HTTP client for the INKSHIELD FastAPI backend (M4 scan flow,
@@ -61,6 +61,19 @@ interface ApiScanResponse {
   summary: ApiScanSummary
   findings: ApiFinding[]
   content: string
+}
+
+/** Raw backend audit event, mirroring backend/app/schemas/audit.py. */
+interface ApiAuditEvent {
+  id: string
+  timestamp: string
+  actor: string
+  actor_type: AuditEvent['actorType']
+  action: string
+  object_type: AuditEvent['objectType']
+  object_id: string
+  previous_state: string
+  new_state: string
 }
 
 /** Thrown for unreachable backends and non-2xx API responses. */
@@ -235,4 +248,45 @@ export async function reviewFinding(
 
   const payload = (await response.json()) as ApiFinding
   return mapFinding(payload)
+}
+
+function mapAuditEvent(event: ApiAuditEvent): AuditEvent {
+  return {
+    id: event.id,
+    timestamp: event.timestamp,
+    actor: event.actor,
+    actorType: event.actor_type,
+    action: event.action,
+    objectType: event.object_type,
+    objectId: event.object_id,
+    previousState: event.previous_state,
+    newState: event.new_state,
+  }
+}
+
+/**
+ * Fetch the audit trail (GET /api/v1/audit-events, M6).
+ *
+ * Events are mapped from the snake_case FastAPI response into the
+ * existing frontend `AuditEvent` type, in chronological order. Throws
+ * `ScanApiError` when the backend is unreachable or responds non-2xx.
+ */
+export async function listAuditEvents(fetchImpl: typeof fetch = fetch): Promise<AuditEvent[]> {
+  const baseUrl = resolveApiBaseUrl()
+
+  let response: Response
+  try {
+    response = await fetchImpl(`${baseUrl}/api/v1/audit-events`)
+  } catch {
+    throw new ScanApiError(
+      `Could not reach the INKSHIELD API at ${baseUrl}. Start the backend (uvicorn app.main:app) or check NEXT_PUBLIC_API_URL.`,
+    )
+  }
+
+  if (!response.ok) {
+    throw new ScanApiError(await readApiError(response), response.status)
+  }
+
+  const payload = (await response.json()) as ApiAuditEvent[]
+  return payload.map(mapAuditEvent)
 }

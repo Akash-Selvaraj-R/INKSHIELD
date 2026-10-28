@@ -126,7 +126,7 @@ class ScanStore:
         scan_id: str,
         finding_id: str,
         payload: ReviewRequest,
-    ) -> Finding:
+    ) -> tuple[Finding, ReviewDecision | None]:
         """Record a human review decision on one finding (M5).
 
         Sets the finding's ``status`` and ``review.decision`` to the
@@ -135,6 +135,10 @@ class ScanStore:
         scan field untouched. Other findings in the scan are never
         modified. Raises ``ScanNotFoundError`` / ``FindingNotFoundError``
         for unknown ids so the route can map them to HTTP 404.
+
+        Returns the updated finding together with the decision that was
+        in effect *before* this review (None while still pending) so the
+        route can audit the state transition.
         """
         with self._lock:
             scan = next((item for item in self._scans if item.id == scan_id), None)
@@ -146,10 +150,11 @@ class ScanStore:
                     f"Finding '{finding_id}' was not found in scan '{scan_id}'"
                 )
 
+            previous_decision = finding.review.decision
             decision = payload.decision
             finding.status = FindingStatus(decision.value)
             finding.review.decision = decision
             if decision is ReviewDecision.EDITED:
                 # Guaranteed non-blank by ReviewRequest's validator.
                 finding.corrected_text = payload.corrected_text
-            return finding
+            return finding, previous_decision

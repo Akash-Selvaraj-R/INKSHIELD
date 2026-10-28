@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createScan, reviewFinding, ScanApiError } from '../lib/api/client'
+import { createScan, listAuditEvents, reviewFinding, ScanApiError } from '../lib/api/client'
 import type { ScanRequest } from '../lib/api/types'
 
 const request = (content: string): ScanRequest => ({ content, contentType: 'landing_page', knowledgeSources: ['claims'] })
@@ -196,6 +196,99 @@ describe('reviewFinding', () => {
     const error = await reviewFinding('scan_abc123def456', 'INK-0043', { decision: 'ESCALATED' }, fetchImpl).catch(
       (e: unknown) => e,
     )
+
+    expect(error).toBeInstanceOf(ScanApiError)
+    expect((error as ScanApiError).message).toContain('Could not reach the INKSHIELD API')
+  })
+})
+
+/** Raw FastAPI (snake_case) audit events, as returned by GET /api/v1/audit-events. */
+const apiAuditEvents = [
+  {
+    id: 'audit_1a2b3c4d5e6f',
+    timestamp: '2026-10-28T13:05:11+00:00',
+    actor: 'INKSHIELD Scanner',
+    actor_type: 'SYSTEM',
+    action: 'Scan completed',
+    object_type: 'SCAN',
+    object_id: 'scan_abc123def456',
+    previous_state: 'RUNNING',
+    new_state: 'NEEDS REVIEW',
+  },
+  {
+    id: 'audit_9f8e7d6c5b4a',
+    timestamp: '2026-10-28T13:05:40+00:00',
+    actor: 'Reviewer',
+    actor_type: 'HUMAN',
+    action: 'Correction edited',
+    object_type: 'FINDING',
+    object_id: 'INK-0043',
+    previous_state: 'PENDING',
+    new_state: 'EDITED',
+  },
+]
+
+describe('listAuditEvents', () => {
+  it('requests the audit endpoint and maps the snake_case response into AuditEvent', async () => {
+    const calls: { url?: string; init?: RequestInit } = {}
+    const fetchImpl = (async (url: string, init?: RequestInit) => {
+      calls.url = url
+      calls.init = init
+      return jsonResponse(apiAuditEvents)
+    }) as unknown as typeof fetch
+
+    const events = await listAuditEvents(fetchImpl)
+
+    expect(calls.url).toBe('http://127.0.0.1:8000/api/v1/audit-events')
+    expect(calls.init?.method ?? 'GET').toBe('GET')
+    expect(events).toEqual([
+      {
+        id: 'audit_1a2b3c4d5e6f',
+        timestamp: '2026-10-28T13:05:11+00:00',
+        actor: 'INKSHIELD Scanner',
+        actorType: 'SYSTEM',
+        action: 'Scan completed',
+        objectType: 'SCAN',
+        objectId: 'scan_abc123def456',
+        previousState: 'RUNNING',
+        newState: 'NEEDS REVIEW',
+      },
+      {
+        id: 'audit_9f8e7d6c5b4a',
+        timestamp: '2026-10-28T13:05:40+00:00',
+        actor: 'Reviewer',
+        actorType: 'HUMAN',
+        action: 'Correction edited',
+        objectType: 'FINDING',
+        objectId: 'INK-0043',
+        previousState: 'PENDING',
+        newState: 'EDITED',
+      },
+    ])
+  })
+
+  it('returns an empty list when no events have been recorded', async () => {
+    const fetchImpl = (async () => jsonResponse([])) as unknown as typeof fetch
+
+    await expect(listAuditEvents(fetchImpl)).resolves.toEqual([])
+  })
+
+  it('throws ScanApiError with the status for non-2xx responses', async () => {
+    const fetchImpl = (async () => jsonResponse({ detail: 'Audit log unavailable' }, 503)) as unknown as typeof fetch
+
+    const error = await listAuditEvents(fetchImpl).catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(ScanApiError)
+    expect((error as ScanApiError).status).toBe(503)
+    expect((error as ScanApiError).message).toContain('Audit log unavailable')
+  })
+
+  it('throws a useful ScanApiError when the backend is unreachable', async () => {
+    const fetchImpl = (async () => {
+      throw new TypeError('fetch failed')
+    }) as unknown as typeof fetch
+
+    const error = await listAuditEvents(fetchImpl).catch((e: unknown) => e)
 
     expect(error).toBeInstanceOf(ScanApiError)
     expect((error as ScanApiError).message).toContain('Could not reach the INKSHIELD API')

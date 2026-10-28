@@ -10,12 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.core.config import settings
+from app.services.audit import AuditLog
 from app.services.scanner import ScanStore
 
 
 def create_app() -> FastAPI:
     """Application factory: each app instance gets its own in-memory
-    scan store, which keeps tests isolated from one another."""
+    scan store and audit log, which keeps tests isolated from one another."""
     app = FastAPI(title=settings.app_name, version=settings.api_version)
     # Allow the Next.js frontend (local dev or Vercel) to call the API.
     # Origins come from INKSHIELD_CORS_ORIGINS; no credentials are shared.
@@ -27,6 +28,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.state.scan_store = ScanStore()
+    app.state.audit_log = AuditLog()
     app.include_router(api_router)
     return app
 
