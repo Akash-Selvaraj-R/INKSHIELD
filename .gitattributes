@@ -1,0 +1,3 @@
+# Submission PDFs are binary artifacts - never run CRLF/text conversion
+# on them (core.autocrlf=true on Windows would otherwise corrupt them).
+*.pdf binary
